@@ -15,6 +15,7 @@ LONG tci_card_open(DWORD sampfreq, DWORD size);
 void tci_card_abort(void);
 BOOL tci_card_write(const SHORT *buf, int count);
 DWORD WINAPI tci_install_hooks(LPVOID arg);
+void tci_note_freq(unsigned long hz);
 
 #define HDR 64
 #define RX_AUDIO 1
@@ -38,6 +39,7 @@ static int g_wsa;
 static char g_host[256] = "127.0.0.1";
 static int g_port = 40001;
 static int g_rx_num;
+static int g_have_vfo;
 static char g_in_sel[160];
 static char g_out_sel[160];
 static int g_app_rate = 11025;
@@ -303,6 +305,8 @@ static void start_audio(void)
 		"AUDIO_START:%d;",
 		g_tci_rate, samples_per_packet(g_tci_rate), g_rx_num);
 	if (send_text(buf)) g_audio_on = 1;
+	_snprintf(buf, sizeof(buf), "VFO:%d,0;", g_rx_num);
+	send_text(buf);
 }
 
 static void stop_audio(void)
@@ -314,19 +318,59 @@ static void stop_audio(void)
 	g_audio_on = 0;
 }
 
+static int split_csv(const char *s, char parts[][32], int max)
+{
+	int n = 0;
+	if (!s) return 0;
+	while (*s && n < max) {
+		int k = 0;
+		while (*s == ' ') s++;
+		while (*s && *s != ',' && k < 31) parts[n][k++] = *s++;
+		parts[n][k] = 0;
+		n++;
+		if (*s == ',') s++;
+	}
+	return n;
+}
+
 static void handle_command(const char *command)
 {
 	char name[64];
+	char parts[4][32];
 	const char *colon = strchr(command, ':');
 	size_t nlen = colon ? (size_t)(colon - command) : strlen(command);
 	size_t i;
+	int nparts;
+	unsigned long hz;
+	int rx, ch;
 	if (nlen >= sizeof(name)) nlen = sizeof(name) - 1;
 	for (i = 0; i < nlen; i++) name[i] = (char)toupper((unsigned char)command[i]);
 	name[nlen] = 0;
+	nparts = split_csv(colon ? colon + 1 : "", parts, 4);
 	if (strcmp(name, "READY") == 0) {
 		g_ready = 1;
 		if ((g_want_in || g_want_out) && !g_audio_on) start_audio();
+		else if (g_connected) {
+			char ask[32];
+			_snprintf(ask, sizeof(ask), "VFO:%d,0;", g_rx_num);
+			send_text(ask);
+		}
 		if (g_rx_event) SetEvent(g_rx_event);
+	} else if (strcmp(name, "VFO") == 0 && nparts >= 3) {
+		rx = atoi(parts[0]);
+		ch = atoi(parts[1]);
+		hz = strtoul(parts[2], NULL, 10);
+		if (rx == g_rx_num && hz > 1000 && (ch == 0 || (ch == 1 && !g_have_vfo))) {
+			if (ch == 0) g_have_vfo = 1;
+			tci_note_freq(hz);
+		}
+	} else if (!g_have_vfo && strcmp(name, "DDS") == 0 && nparts >= 2) {
+		rx = atoi(parts[0]);
+		hz = strtoul(parts[1], NULL, 10);
+		if (rx == g_rx_num && hz > 1000) tci_note_freq(hz);
+	} else if (!g_have_vfo && strcmp(name, "TX_FREQUENCY") == 0 && nparts >= 1) {
+		hz = strtoul(parts[0], NULL, 10);
+		if (hz > 1000) tci_note_freq(hz);
 	}
 }
 

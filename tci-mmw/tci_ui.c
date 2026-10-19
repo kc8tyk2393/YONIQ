@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <mmsystem.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define FAKE_OUT ((HWAVEOUT)(ULONG_PTR)0x711C1001)
@@ -766,6 +767,296 @@ BOOL tci_card_write(const SHORT *buf, int count)
 	return TRUE;
 }
 
+static volatile LONG g_rig_hz;
+static LONG g_shown_hz;
+static HWND g_freq_win;
+static HWND g_band_combo;
+static HWND g_log_box;
+static HBRUSH g_freq_bg;
+static char g_freq_text[64] = "FREQUENCY";
+static HFONT g_freq_font;
+
+void tci_note_freq(unsigned long hz)
+{
+	if (hz > 1000) InterlockedExchange(&g_rig_hz, (LONG)hz);
+}
+
+static int band_for(unsigned long hz, char *band, int nb, char *disp, int nd)
+{
+	struct { unsigned long lo, hi; int digits; const char *name; } rows[] = {
+		{1810000, 2700000, 1, "160M"},
+		{3500000, 3800000, 1, "80M"},
+		{5351500, 5366500, 1, "60M"},
+		{7000000, 7200000, 1, "40M"},
+		{10000000, 10150000, 2, "30M"},
+		{14000000, 14350000, 2, "20M"},
+		{18068000, 18168000, 2, "17M"},
+		{21000000, 21450000, 2, "15M"},
+		{24890000, 24990000, 2, "12M"},
+		{26965000, 27405000, 2, "11M"},
+		{27700000, 27700000, 2, "11M"},
+		{28000000, 29700000, 2, "10M"},
+		{50000000, 52000000, 2, "6M"},
+		{70150000, 70200000, 2, "4M"},
+		{144000000, 146000000, 3, "2M"},
+		{430000000, 440000000, 3, "70CM"}
+	};
+	int i, mhz, khz, digits;
+	char num[16], ms[8], ks[8];
+	for (i = 0; i < (int)(sizeof(rows) / sizeof(rows[0])); i++) {
+		if (hz < rows[i].lo || hz > rows[i].hi) continue;
+		digits = rows[i].digits;
+		_snprintf(num, sizeof(num), "%lu", hz);
+		if ((int)strlen(num) < digits + 3) {
+			mhz = (int)(hz / 1000000UL);
+			khz = (int)((hz / 1000UL) % 1000UL);
+		} else {
+			memcpy(ms, num, (size_t)digits);
+			ms[digits] = 0;
+			memcpy(ks, num + digits, 3);
+			ks[3] = 0;
+			mhz = atoi(ms);
+			khz = atoi(ks);
+		}
+		_snprintf(band, (size_t)nb, "%s", rows[i].name);
+		_snprintf(disp, (size_t)nd, " %d.%03dKhz->%s", mhz, khz, rows[i].name);
+		return 1;
+	}
+	_snprintf(band, (size_t)nb, "%s", "");
+	_snprintf(disp, (size_t)nd, "%s", " FUERA DE BANDA");
+	return 0;
+}
+
+static LRESULT CALLBACK freq_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+	if (msg == WM_ERASEBKGND) {
+		RECT r;
+		HDC dc = (HDC)wp;
+		GetClientRect(hwnd, &r);
+		if (!g_freq_bg) g_freq_bg = CreateSolidBrush(RGB(32, 32, 32));
+		FillRect(dc, &r, g_freq_bg);
+		return 1;
+	}
+	if (msg == WM_PAINT) {
+		PAINTSTRUCT ps;
+		RECT r;
+		HDC dc = BeginPaint(hwnd, &ps);
+		HFONT old;
+		GetClientRect(hwnd, &r);
+		if (!g_freq_bg) g_freq_bg = CreateSolidBrush(RGB(32, 32, 32));
+		FillRect(dc, &r, g_freq_bg);
+		SetBkMode(dc, TRANSPARENT);
+		SetTextColor(dc, RGB(255, 255, 255));
+		old = (HFONT)SelectObject(dc, g_freq_font ? g_freq_font : GetStockObject(ANSI_FIXED_FONT));
+		DrawTextA(dc, g_freq_text, -1, &r, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		SelectObject(dc, old);
+		EndPaint(hwnd, &ps);
+		return 0;
+	}
+	return DefWindowProc(hwnd, msg, wp, lp);
+}
+
+static int combo_has_text_item(HWND cb, const wchar_t *want)
+{
+	int count = (int)SendMessage(cb, CB_GETCOUNT, 0, 0);
+	int i;
+	for (i = 0; i < count; i++) {
+		if (IsWindowUnicode(cb)) {
+			WCHAR w[40];
+			SendMessageW(cb, CB_GETLBTEXT, (WPARAM)i, (LPARAM)w);
+			if (_wcsicmp(w, want) == 0) return 1;
+		} else {
+			char a[40];
+			SendMessageA(cb, CB_GETLBTEXT, (WPARAM)i, (LPARAM)a);
+			if (_stricmp(a, "160M") == 0 && wcscmp(want, L"160M") == 0) return 1;
+		}
+	}
+	return 0;
+}
+
+static void find_band_combo(HWND parent)
+{
+	HWND c;
+	for (c = GetWindow(parent, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
+		char cls[64];
+		GetClassNameA(c, cls, 64);
+		if ((strstr(cls, "Combo") || strstr(cls, "COMBO")) && combo_has_text_item(c, L"160M") && combo_has_text_item(c, L"20M"))
+			g_band_combo = c;
+		find_band_combo(c);
+	}
+}
+
+static void set_band_text(HWND cb, const char *text)
+{
+	char cur[40];
+	WCHAR w[40];
+	int idx;
+	if (!cb || !text || !text[0]) return;
+	combo_text(cb, cur, 40);
+	if (_stricmp(cur, text) == 0) return;
+	if (IsWindowUnicode(cb)) {
+		MultiByteToWideChar(CP_ACP, 0, text, -1, w, 40);
+		idx = (int)SendMessageW(cb, CB_FINDSTRINGEXACT, (WPARAM)-1, (LPARAM)w);
+		if (idx >= 0) SendMessageW(cb, CB_SETCURSEL, (WPARAM)idx, 0);
+		else SetWindowTextW(cb, w);
+	} else {
+		idx = (int)SendMessageA(cb, CB_FINDSTRINGEXACT, (WPARAM)-1, (LPARAM)text);
+		if (idx >= 0) SendMessageA(cb, CB_SETCURSEL, (WPARAM)idx, 0);
+		else SetWindowTextA(cb, text);
+	}
+}
+
+static void find_log(HWND parent)
+{
+	HWND c;
+	for (c = GetWindow(parent, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
+		char cls[64], txt[32];
+		GetClassNameA(c, cls, 64);
+		GetWindowTextA(c, txt, 32);
+		if (strstr(cls, "Group") && _stricmp(txt, "LOG") == 0) g_log_box = c;
+		find_log(c);
+	}
+}
+
+static void place_freq(HWND main)
+{
+	RECT wr;
+	int gw, gh, x, y, w, h;
+	POINT pt;
+	if (g_rig_hz < 1000) {
+		if (g_freq_win) ShowWindow(g_freq_win, SW_HIDE);
+		return;
+	}
+	if (!g_log_box || !IsWindow(g_log_box)) {
+		g_log_box = NULL;
+		find_log(main);
+	}
+	if (!g_log_box) return;
+	GetWindowRect(g_log_box, &wr);
+	gw = wr.right - wr.left;
+	gh = wr.bottom - wr.top;
+	if (gw < 100 || gh < 40) return;
+	/* Label1 is Left 255, Top 131, Width 108, Height 25 inside the design 367x164 LOG group.
+	   On the live window the glyphs sit just under the RxID/TxID buttons. */
+	pt.x = wr.left + (gw * 255) / 367;
+	pt.y = wr.top + (gh * 128) / 164;
+	w = (gw * 108) / 367;
+	h = (gh * 32) / 164;
+	if (w < 70) w = 70;
+	if (h < 16) h = 16;
+	MapWindowPoints(NULL, main, &pt, 1);
+	x = pt.x;
+	y = pt.y;
+	if (!g_freq_win) {
+		WNDCLASSW wc;
+		memset(&wc, 0, sizeof(wc));
+		wc.lpfnWndProc = freq_proc;
+		wc.hInstance = GetModuleHandle(NULL);
+		wc.lpszClassName = L"YoniqTciFreq";
+		wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+		RegisterClassW(&wc);
+		g_freq_win = CreateWindowExW(0, L"YoniqTciFreq", L"", WS_CHILD | WS_VISIBLE, x, y, w, h, main, NULL, GetModuleHandle(NULL), NULL);
+	}
+	{
+		static int font_px;
+		int fh = h - 12;
+		if (fh > w / 10) fh = w / 10;
+		if (fh < 12) fh = 12;
+		if (fh != font_px) {
+			HFONT nf = CreateFontA(-fh, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+				DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+				FIXED_PITCH | FF_MODERN, "Courier New");
+			if (nf) {
+				if (g_freq_font) DeleteObject(g_freq_font);
+				g_freq_font = nf;
+				font_px = fh;
+			}
+		}
+	}
+	if (g_freq_win) {
+		SetWindowPos(g_freq_win, HWND_TOP, x, y, w, h, SWP_SHOWWINDOW);
+		InvalidateRect(g_freq_win, NULL, TRUE);
+	}
+}
+
+static void apply_rig(HWND main)
+{
+	LONG hz = g_rig_hz;
+	char band[16], disp[64];
+	if (!main) return;
+	if (!g_band_combo || !IsWindow(g_band_combo)) {
+		g_band_combo = NULL;
+		find_band_combo(main);
+	}
+	if (hz > 1000 && hz != g_shown_hz) {
+		band_for((unsigned long)hz, band, 16, disp, 64);
+		_snprintf(g_freq_text, sizeof(g_freq_text), "%s", disp);
+		set_band_text(g_band_combo, band);
+		g_shown_hz = hz;
+	}
+	place_freq(main);
+}
+
+static HWND g_main_target;
+static HHOOK g_main_hook;
+static LRESULT CALLBACK main_rig_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+
+static LRESULT CALLBACK main_hook_proc(int code, WPARAM wp, LPARAM lp)
+{
+	if (code == HC_ACTION) {
+		CWPSTRUCT *cwp = (CWPSTRUCT *)lp;
+		if (cwp->hwnd == g_main_target && !GetPropA(cwp->hwnd, "TciMain")) {
+			HWND main = g_main_target;
+			HHOOK hk = g_main_hook;
+			WNDPROC old = (WNDPROC)(IsWindowUnicode(main) ? GetWindowLongPtrW(main, GWLP_WNDPROC) : GetWindowLongPtrA(main, GWLP_WNDPROC));
+			SetPropA(main, "TciMainOld", (HANDLE)old);
+			if (IsWindowUnicode(main)) SetWindowLongPtrW(main, GWLP_WNDPROC, (LONG_PTR)main_rig_proc);
+			else SetWindowLongPtrA(main, GWLP_WNDPROC, (LONG_PTR)main_rig_proc);
+			SetPropA(main, "TciMain", (HANDLE)1);
+			g_main_hook = NULL;
+			PostMessage(main, WM_APP + 61, 0, 0);
+			if (hk) UnhookWindowsHookEx(hk);
+		}
+	}
+	return CallNextHookEx(NULL, code, wp, lp);
+}
+
+static LRESULT CALLBACK main_rig_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+	WNDPROC old = (WNDPROC)GetPropA(hwnd, "TciMainOld");
+	int unicode = IsWindowUnicode(hwnd);
+	if (msg == WM_APP + 61) {
+		apply_rig(hwnd);
+		return 0;
+	}
+	return unicode ? CallWindowProcW(old, hwnd, msg, wp, lp) : CallWindowProcA(old, hwnd, msg, wp, lp);
+}
+
+static void sync_rig_window(void)
+{
+	HWND w;
+	DWORD pid = GetCurrentProcessId();
+	for (w = GetTopWindow(NULL); w; w = GetWindow(w, GW_HWNDNEXT)) {
+		DWORD wpid = 0;
+		char cls[64];
+		GetWindowThreadProcessId(w, &wpid);
+		if (wpid != pid || !IsWindowVisible(w)) continue;
+		GetClassNameA(w, cls, 64);
+		if (strcmp(cls, "TMmsstv") != 0) continue;
+		if (GetPropA(w, "TciMain")) {
+			PostMessage(w, WM_APP + 61, 0, 0);
+		} else if (!g_main_hook) {
+			DWORD tid = GetWindowThreadProcessId(w, NULL);
+			HMODULE self = NULL;
+			GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				(LPCSTR)sync_rig_window, &self);
+			g_main_target = w;
+			g_main_hook = SetWindowsHookExA(WH_CALLWNDPROC, main_hook_proc, self, tid);
+			if (g_main_hook) SendMessage(w, WM_NULL, 0, 0);
+		}
+	}
+}
+
 DWORD WINAPI tci_install_hooks(LPVOID arg)
 {
 	HMODULE winmm;
@@ -795,6 +1086,7 @@ DWORD WINAPI tci_install_hooks(LPVOID arg)
 	g_pace_thread = CreateThread(NULL, 0, pace_main, NULL, 0, NULL);
 	for (;;) {
 		look_for_dialog();
+		sync_rig_window();
 		Sleep(400);
 	}
 	return 0;
