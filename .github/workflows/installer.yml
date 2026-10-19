@@ -35,16 +35,26 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer\stage.ps1
 
       - name: Build setup exe
+        shell: pwsh
         run: |
-          choco install innosetup -y --no-progress
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $iscc = @(
-            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
-          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $iscc) { throw "Inno Setup compiler was not installed" }
-          & $iscc installer\YONIQ.iss
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $log = 'dist\setup-build.log'
+          choco install innosetup -y --no-progress *>&1 | Tee-Object -FilePath $log
+          "choco exit $LASTEXITCODE" | Tee-Object -FilePath $log -Append
+          $iscc = Get-ChildItem -Path 'C:\Program Files*','C:\ProgramData\chocolatey' -Filter ISCC.exe -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+          "iscc=$iscc" | Tee-Object -FilePath $log -Append
+          if (-not $iscc) { Get-Content $log | ForEach-Object { "::error::$_" }; exit 1 }
+          & $iscc installer\YONIQ.iss *>&1 | Tee-Object -FilePath $log -Append
+          $code = $LASTEXITCODE
+          "iscc exit $code" | Tee-Object -FilePath $log -Append
+          Get-Content $log | Set-Content -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          if ($code -ne 0) {
+            Get-Content $log | Select-Object -Last 40 | ForEach-Object { "::error::$_" }
+            exit $code
+          }
 
       - name: Build MSI
         working-directory: installer
