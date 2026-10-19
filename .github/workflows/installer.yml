@@ -1,0 +1,67 @@
+name: Installers
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - tci-mmw/**
+      - installer/**
+      - .github/workflows/installer.yml
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          install: mingw-w64-i686-gcc
+          update: false
+
+      - name: Build TCI plugin and launcher
+        shell: msys2 {0}
+        run: |
+          cd tci-mmw
+          gcc -shared -O2 -static -static-libgcc -Wl,--kill-at -o TCI.mmw tci_mmw.c tci_ui.c -lws2_32 -lwinmm -lgdi32 -Wall
+          gcc -O2 -mwindows -static -static-libgcc -o Yoniq_launch.exe tci_launch.c -Wall
+
+      - name: Stage install files
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer\stage.ps1
+
+      - name: Build setup exe
+        run: |
+          Invoke-WebRequest -Uri "https://jrsoftware.org/download.php/is.exe" -OutFile "$env:TEMP\innosetup.exe"
+          Start-Process "$env:TEMP\innosetup.exe" -ArgumentList "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES" -Wait
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\YONIQ.iss
+
+      - name: Build MSI
+        working-directory: installer
+        run: |
+          dotnet tool install --global wix --version 6.0.2
+          wix extension add -g WixToolset.UI.wixext/6.0.2
+          wix build YONIQ.wxs -ext WixToolset.UI.wixext -arch x86 -o ..\dist\YONIQ.msi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YONIQ-installers
+          path: |
+            dist/YONIQ-setup.exe
+            dist/YONIQ.msi
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.13.0
+          name: YONIQ 1.13.0
+          body: |
+            Self-installing YONIQ packages. Both install to C:\Ham\MMSSTV and add a desktop shortcut.
+            YONIQ-setup.exe is the setup wizard. YONIQ.msi is the Windows Installer package.
+          files: |
+            dist/YONIQ-setup.exe
+            dist/YONIQ.msi
+          make_latest: true

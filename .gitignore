@@ -19,3 +19,11 @@ src-zip/
 *.ild
 *.ilf
 *.ils
+
+installer/stage/
+dist/
+
+!installer/redist/
+!installer/redist/Yoniq_core.exe
+!installer/redist/MMSSTV.CHM
+!installer/redist/MMSSTV.HLP

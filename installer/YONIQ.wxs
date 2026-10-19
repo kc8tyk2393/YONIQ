@@ -1,0 +1,80 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="YONIQ" Manufacturer="YONIQ" Version="1.13.0.0"
+           UpgradeCode="7C4E9A21-6B0D-4F58-9C3A-2E8D5F1A0B47" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of YONIQ is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="YoniqIcon" SourceFile="stage\mmsstv_i.ico" />
+    <Property Id="ARPPRODUCTICON" Value="YoniqIcon" />
+    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+
+    <StandardDirectory Id="TARGETDIR">
+      <Directory Id="HamFolder" Name="Ham">
+        <Directory Id="INSTALLFOLDER" Name="MMSSTV">
+          <Component Id="AppFiles" Guid="B7E4C1A2-5D83-4F60-9A17-6C2E8B0D4F31">
+            <File Id="YoniqExe" Source="stage\Yoniq.exe" KeyPath="yes" />
+            <File Id="YoniqCore" Source="stage\Yoniq_core.exe" />
+            <File Id="TciMmw" Source="stage\TCI.mmw" />
+            <File Id="ArrlDx" Source="stage\ARRL.DX" />
+            <File Id="Def1" Source="stage\DEF1.MTM" />
+            <File Id="Def2" Source="stage\DEF2.MTM" />
+            <File Id="Def3" Source="stage\DEF3.MTM" />
+            <File Id="Def4" Source="stage\DEF4.MTM" />
+            <File Id="Def5" Source="stage\DEF5.MTM" />
+            <File Id="Emmsstv" Source="stage\EMMSSTV.TXT" />
+            <File Id="Emstvlog" Source="stage\EMSTVLOG.TXT" />
+            <File Id="Eupdate" Source="stage\EUPDATE.TXT" />
+            <File Id="Fskid" Source="stage\FSKID.TXT" />
+            <File Id="Jasta" Source="stage\JASTA.TXT" />
+            <File Id="LicenseTxt" Source="stage\License.TXT" />
+            <File Id="Mmcg" Source="stage\MMCG.DEF" />
+            <File Id="Chm" Source="stage\MMSSTV.CHM" />
+            <File Id="Cnt" Source="stage\mmsstv.cnt" />
+            <File Id="Hlp" Source="stage\MMSSTV.HLP" />
+            <File Id="Ico" Source="stage\mmsstv_i.ico" />
+            <File Id="Mode" Source="stage\MODE.TXT" />
+            <File Id="Nvcg" Source="stage\NVCG.TXT" />
+            <File Id="Readme" Source="stage\Readme.txt" />
+            <File Id="Repeater" Source="stage\REPEATER.TXT" />
+            <File Id="Terms" Source="stage\Terms.txt" />
+            <File Id="Copying" Source="stage\COPYING.txt" />
+            <File Id="CopyingLesser" Source="stage\COPYING.LESSER.txt" />
+          </Component>
+          <Component Id="ConfigCfg" Guid="C8F51D33-2A74-4E19-B6C0-7D3A9E1F5B42" NeverOverwrite="yes">
+            <File Id="ConfigCfgFile" Source="stage\Config.cfg" KeyPath="yes" />
+          </Component>
+          <Component Id="Shortcuts" Guid="3F6A1C90-8D24-4B77-A1E5-9C0B6D2E4F18">
+            <Shortcut Id="StartMenu" Directory="ProgramMenuFolder" Name="YONIQ"
+                      Target="[INSTALLFOLDER]Yoniq.exe" WorkingDirectory="INSTALLFOLDER" Icon="YoniqIcon" />
+            <Shortcut Id="Desktop" Directory="DesktopFolder" Name="YONIQ"
+                      Target="[INSTALLFOLDER]Yoniq.exe" WorkingDirectory="INSTALLFOLDER" Icon="YoniqIcon" />
+            <RegistryValue Root="HKLM" Key="Software\YONIQ" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+          </Component>
+          <Directory Id="StockFolder" Name="Stock">
+            <Component Id="StockFiles" Guid="D94A6E08-1B35-4C72-8F0D-5E7C3A2B9D16">
+              <File Id="StockCurrentBmp" Source="stage\Stock\Current.bmp" KeyPath="yes" />
+              <File Id="StockCurrent" Source="stage\Stock\Current.mtm" />
+              <File Id="StockList" Source="stage\Stock\List.mtm" />
+              <File Id="StockT1" Source="stage\Stock\t1.mtm" />
+              <File Id="StockT2" Source="stage\Stock\t2.mtm" />
+              <File Id="StockT3" Source="stage\Stock\t3.mtm" />
+              <File Id="StockT4" Source="stage\Stock\t4.mtm" />
+              <File Id="StockT5" Source="stage\Stock\t5.mtm" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <StandardDirectory Id="DesktopFolder" />
+
+    <Feature Id="Main" Title="YONIQ">
+      <ComponentRef Id="AppFiles" />
+      <ComponentRef Id="ConfigCfg" />
+      <ComponentRef Id="Shortcuts" />
+      <ComponentRef Id="StockFiles" />
+    </Feature>
+  </Package>
+</Wix>
