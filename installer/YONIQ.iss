@@ -19,7 +19,6 @@ SetupIconFile=stage\mmsstv_i.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
 SolidCompression=yes
-ArchitecturesAllowed=x86compatible
 PrivilegesRequired=admin
 WizardStyle=modern
 
@@ -28,7 +27,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checked
 
 [Files]
 Source: "stage\*"; DestDir: "{app}"; Excludes: "Config.cfg"; Flags: ignoreversion
